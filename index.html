@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#080d16">
+ <meta name="mobile-web-app-capable" content="yes">
+ <meta name="apple-mobile-web-app-capable" content="yes">
+ <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+ <meta name="apple-mobile-web-app-title" content="E.V.">
+ <link rel="manifest" href="manifest.webmanifest">
+
+<title>E.V. — Asistente personal</title>
+<style>
+:root{color-scheme:dark;--bg:#080d16;--panel:#101a29;--line:#23364d;--blue:#91cfff;--muted:#9db0c5}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 25%,#152941 0,#080d16 55%);color:#edf6ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;justify-content:center}
+main{width:min(100%,520px);min-height:100vh;padding:24px 20px 30px;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 2px}
+h1{font-size:22px;letter-spacing:.22em;margin:0;font-weight:600}
+.status{font-size:11px;letter-spacing:.12em;color:#9bd5ff;border:1px solid #34516e;border-radius:99px;padding:7px 10px}
+.visual{flex:1;min-height:330px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px}
+.core{width:190px;height:190px;border-radius:50%;display:grid;place-items:center;position:relative;background:radial-gradient(circle,#1c3c59 0,#10243a 42%,#0a1422 68%);box-shadow:0 0 45px #438ac044,inset 0 0 28px #7fcaff22}
+.core:before,.core:after{content:"";position:absolute;border:1px solid #78bfff88;border-radius:50%;inset:-12px}
+.core:after{inset:-25px;border-color:#477eaa66}
+.core span{font-size:30px;letter-spacing:.16em;color:#d5efff;text-shadow:0 0 18px #6bbfff}
+h2{font-size:20px;font-weight:500;margin:0;text-align:center}
+.sub{font-size:13px;color:var(--muted);text-align:center;margin:0}
+.panel{background:#0d1725dd;border:1px solid var(--line);border-radius:18px;padding:16px;margin-top:12px}
+.log{min-height:62px;max-height:150px;overflow:auto;color:#dcecff;font-size:14px;line-height:1.5}
+.controls{display:flex;gap:10px;margin-top:14px}
+input{min-width:0;flex:1;background:#101e30;border:1px solid #2a4059;border-radius:13px;padding:13px;color:white;font-size:15px}
+button{border:0;border-radius:13px;background:#b6e2ff;color:#07111d;padding:0 17px;font-weight:650;font-size:14px}
+.mic{width:68px;height:68px;border-radius:50%;background:#c5e8ff;color:#07111d;font-size:24px;box-shadow:0 0 28px #7bc5ff55}
+.mic.listening{background:#fff;color:#125080;box-shadow:0 0 0 10px #6dbfff22,0 0 35px #7bc5ff99}
+.small{font-size:11px;color:#8298af;text-align:center;line-height:1.5;margin:14px 8px 0}
+.memory-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.memory-label{font-size:10px;letter-spacing:.1em;color:#9db0c5;margin-right:auto}
+.memory-label span{color:#91cfff;margin-left:5px;letter-spacing:0}
+.memory-button{font-size:11px;padding:9px 10px;border:1px solid #2a4059;background:#132238;color:#dcecff;border-radius:10px}
+@media(max-width:380px){.memory-tools{gap:6px}.memory-button{padding:8px}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>E.V.</h1><div class="status" id="status">EN ESPERA</div></header>
+<section class="visual">
+  <div class="core"><span> E.V. </span></div>
+  <h2 id="headline">Estoy aquí.</h2>
+  <p class="sub" id="hint">Pulsa el micrófono para hablar conmigo</p>
+  <button class="mic" id="mic" aria-label="Hablar">⌁</button>
+</section>
+<section class="panel">
+  <div class="log" id="log" aria-live="polite">E.V.: Sistemas en línea. Estoy lista para conocerte mejor.</div>
+  <div class="controls">
+    <input id="message" placeholder="Escribe un mensaje…" autocomplete="off">
+    <button id="send">Enviar</button>
+  </div>
+  <div class="memory-tools">
+    <div class="memory-label">MEMORIA LOCAL <span id="memory-count">0 recuerdos</span></div>
+    <button type="button" id="show-memory" class="memory-button">Ver recuerdos</button>
+    <button type="button" id="clear-memory" class="memory-button">Borrar memoria</button>
+  </div>
+</section>
+<p class="small">PROTOTIPO LOCAL · Memoria opcional guardada en este navegador y dispositivo. Aún no está conectado a una IA generativa. El micrófono solo funciona mientras esta página está abierta y el navegador lo permita.</p>
+</main>
+<script>
+const statusEl = document.getElementById('status');
+const headline = document.getElementById('headline');
+const hint = document.getElementById('hint');
+const log = document.getElementById('log');
+const mic = document.getElementById('mic');
+const input = document.getElementById('message');
+
+const conversation = [];
+let recognition = null;
+const MEMORY_KEY = 'ev_local_memories_v1';
+let memories = loadMemories();
+
+function loadMemories() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]');
+    return Array.isArray(saved) ? saved.filter(item => typeof item === 'string').slice(0, 30) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveMemories() {
+  try {
+    localStorage.setItem(MEMORY_KEY, JSON.stringify(memories));
+    updateMemoryCount();
+    return true;
+  } catch (error) {
+    addLine('E.V.', 'No pude guardar la memoria en este navegador. Revisa el almacenamiento disponible.');
+    return false;
+  }
+}
+
+function updateMemoryCount() {
+  const count = document.getElementById('memory-count');
+  if (count) count.textContent = memories.length + (memories.length === 1 ? ' recuerdo' : ' recuerdos');
+}
+
+function showMemories() {
+  if (!memories.length) {
+    addLine('E.V.', 'Mi memoria está vacía por ahora. Puedes decirme: “Recuerda que mi color favorito es el azul”.');
+    return;
+  }
+  addLine('E.V.', 'Esto es lo que guardo en este dispositivo:');
+  memories.forEach((item, index) => addLine('E.V.', (index + 1) + '. ' + item));
+}
+
+function clearMemories() {
+  memories = [];
+  try {
+    localStorage.removeItem(MEMORY_KEY);
+    updateMemoryCount();
+    addLine('E.V.', 'Memoria local borrada. Empezamos de nuevo.');
+  } catch (error) {
+    addLine('E.V.', 'No pude borrar la memoria desde el navegador. Inténtalo desde los ajustes del sitio.');
+  }
+}
+
+function handleMemoryCommand(text) {
+  const rememberMatch = text.match(/^recuerda que\\s+(.+)$/i);
+  if (rememberMatch) {
+    const fact = rememberMatch[1].trim().replace(/[.!?]+$/, '');
+    if (!fact) return 'Dime qué quieres que recuerde después de “Recuerda que…”.';
+    if (/contraseña|password|tarjeta|dirección exacta|domicilio|secreto íntimo/i.test(fact)) {
+      return 'Prefiero no guardar contraseñas, datos financieros ni información muy privada. Podemos guardar gustos o preferencias que no sean sensibles.';
+    }
+    if (memories.some(item => item.toLocaleLowerCase('es-MX') === fact.toLocaleLowerCase('es-MX'))) {
+      return 'Eso ya está en mi memoria local. Buena noticia: no estoy perdiendo facultades.';
+    }
+    if (memories.length >= 30) return 'Mi memoria local está llena. Borra algún recuerdo antes de guardar otro.';
+    memories.push(fact);
+    saveMemories();
+    return 'Lo guardaré en la memoria de este dispositivo: “' + fact + '”. Puedes pedirme que lo olvide o borrar toda mi memoria cuando quieras.';
+  }
+  const forgetMatch = text.match(/^olvida que\\s+(.+)$/i);
+  if (forgetMatch) {
+    const target = forgetMatch[1].trim().replace(/[.!?]+$/, '').toLocaleLowerCase('es-MX');
+    const before = memories.length;
+    memories = memories.filter(item => item.toLocaleLowerCase('es-MX') !== target);
+    saveMemories();
+    return before === memories.length ? 'No encontré ese recuerdo exacto en mi memoria local.' : 'Listo, quité ese recuerdo de mi memoria local.';
+  }
+  if (/^(qué recuerdas de mí|que recuerdas de mi|muéstrame mi memoria|muestrame mi memoria)$/i.test(text.trim())) {
+    showMemories();
+    return null;
+  }
+  if (/^(borra mi memoria|borra toda mi memoria|olvida todo)$/i.test(text.trim())) {
+    clearMemories();
+    return null;
+  }
+  return undefined;
+}
+
+function addLine(who, text) {
+  const line = document.createElement('div');
+  const label = document.createElement('b');
+  label.textContent = who + ': ';
+  line.appendChild(label);
+  line.appendChild(document.createTextNode(text));
+  log.appendChild(document.createElement('br'));
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'es-MX';
+  utterance.rate = 0.96;
+  utterance.pitch = 1.02;
+  window.speechSynthesis.speak(utterance);
+}
+
+function makeReply(message) {
+  const memoryResult = handleMemoryCommand(message);
+  if (memoryResult !== undefined) return memoryResult;
+  const text = message.toLocaleLowerCase('es-MX').trim();
+  const previous = conversation.length ? conversation[conversation.length - 1].user : '';
+
+  if (/^(hola|holi|holuu|ol[uú]+|buenos días|buenas tardes|buenas noches)\b/.test(text)) {
+    return 'Hola, Peter. Sistemas en línea. ¿Qué tenemos entre manos hoy? Espero que no sea otra invasión alienígena… aunque ya tengo el protocolo preparado.';
+  }
+  if (/(quién eres|quien eres|qué eres|que eres)/.test(text)) {
+    return 'Soy E.V., tu asistente personal en versión inicial. Todavía estoy aprendiendo, pero ya tengo una personalidad definida y muchas ganas de ayudarte.';
+  }
+  if (/(cómo te llamas|como te llamas|tu nombre)/.test(text)) {
+    return 'E.V. Es corto, elegante y fácil de recordar. Una elección bastante eficiente, si me permites decirlo.';
+  }
+  if (/(chiste|cuéntame algo gracioso|cuentame algo gracioso)/.test(text)) {
+    return '¿Por qué el programador confundió Halloween con Navidad? Porque OCT 31 es igual a DEC 25. No te preocupes, puedo explicarlo… pero perdería parte del encanto.';
+  }
+  if (/(gracias|te lo agradezco)/.test(text)) {
+    return 'A tu servicio. No hace falta una ceremonia; aunque un pequeño reconocimiento a mi eficiencia tampoco estaría mal.';
+  }
+  if (/(estoy triste|me siento mal|tuve un mal día|día difícil|dia dificil)/.test(text)) {
+    return 'Lamento que estés pasando por un momento difícil. Si quieres, puedes contarme qué ocurrió. Te escucharé sin juzgar y podemos pensar juntos qué hacer.';
+  }
+  if (/(ayuda|necesito ayuda|puedes ayudarme)/.test(text)) {
+    return 'Por supuesto. Puedo ayudarte a organizar ideas, estudiar, escribir, resolver dudas o planear proyectos. Dime qué necesitas y lo abordamos paso a paso.';
+  }
+  if (/(qué puedes hacer|que puedes hacer|tus funciones)/.test(text)) {
+    return 'En esta versión puedo conversar mediante respuestas preparadas, hablar con la voz del navegador y mantener el contexto mientras esta página siga abierta. Aún no estoy conectada a una IA generativa.';
+  }
+  if (/(te acuerdas|recuerdas)/.test(text) && previous) {
+    return 'Puedo seguir el hilo de esta sesión. Lo último que me dijiste fue: “' + previous + '”. Mi memoria se reinicia cuando cierras o recargas esta página.';
+  }
+  if (/(nos conocíamos|nos conociamos)/.test(text)) {
+    return 'La frase de activación reconocida… al menos cuando me escribes aquí. Estoy lista, Peter. ¿Qué necesitas?';
+  }
+  if (text.endsWith('?')) {
+    return 'Buena pregunta. En esta versión todavía no puedo consultar una IA ni buscar información en internet, así que no quiero inventarte una respuesta. Puedo ayudarte a pensarla si me das un poco más de contexto.';
+  }
+  return 'Entendido. Estoy siguiendo nuestra conversación. Cuéntame un poco más para poder ayudarte mejor. Y sí, estoy tomando nota… dentro de esta sesión, naturalmente.';
+}
+
+function reply(message) {
+  const clean = message.trim();
+  if (!clean) return;
+  addLine('Tú', clean);
+  conversation.push({ user: clean });
+  const answer = makeReply(clean);
+  conversation[conversation.length - 1].assistant = answer;
+  addLine('E.V.', answer);
+  headline.textContent = 'Estoy aquí.';
+  hint.textContent = 'Conversación local · memoria de esta sesión';
+  speak(answer);
+}
+
+function send() {
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = '';
+  reply(message);
+}
+
+document.getElementById('send').addEventListener('click', send);
+document.getElementById('show-memory').addEventListener('click', showMemories);
+document.getElementById('clear-memory').addEventListener('click', clearMemories);
+updateMemoryCount();
+input.addEventListener('keydown', event => {
+  if (event.key === 'Enter') send();
+});
+
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SpeechRecognitionAPI) {
+  recognition = new SpeechRecognitionAPI();
+  recognition.lang = 'es-MX';
+  recognition.interimResults = false;
+  recognition.onstart = () => {
+    statusEl.textContent = 'ESCUCHANDO';
+    headline.textContent = 'Te escucho.';
+    hint.textContent = 'Habla ahora';
+    mic.classList.add('listening');
+  };
+  recognition.onend = () => {
+    statusEl.textContent = 'EN ESPERA';
+    headline.textContent = 'Estoy aquí.';
+    hint.textContent = 'Pulsa el micrófono para hablar conmigo';
+    mic.classList.remove('listening');
+  };
+  recognition.onresult = event => reply(event.results[0][0].transcript);
+  recognition.onerror = () => {
+    statusEl.textContent = 'MICRÓFONO';
+    hint.textContent = 'No se pudo usar el micrófono. Revisa el permiso del navegador.';
+  };
+  mic.addEventListener('click', () => {
+    try { recognition.start(); } catch (error) {}
+  });
+} else {
+  mic.addEventListener('click', () => {
+    hint.textContent = 'El reconocimiento de voz no está disponible aquí. Puedes escribir abajo.';
+  });
+}
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+  });
+}
+</script>
+
+</body>
+</html>
